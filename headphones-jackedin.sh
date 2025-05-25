@@ -28,36 +28,42 @@ start_service() {
   get_default_sink() {
     pactl info | awk -F': ' '/Default Sink/ {print $2}'
   }
-
+get_headphones_port() {
+  pactl list sinks | grep -A20 "Name: $REAL_SINK" | grep "Ports:" -A5 | grep "headphones" | awk -F': ' '/^[[:space:]]+[a-z0-9-]+:/ {print $1; exit}'
+}
   # Switch real sink to headphones port
-  switch_real_sink_to_headphones() {
-    echo "Switching real sink '$REAL_SINK' port to headphones..."
-    pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
-    pactl set-default-sink "$REAL_SINK"
+switch_real_sink_to_headphones() {
+  echo "Switching onboard sink '$REAL_SINK' port to headphones..."
+  pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
 
-    # Move all active audio streams to the real sink
-sink_inputs=$(pactl list short sink-inputs | awk '{print $1}')
-for input in $sink_inputs; do
-  pactl move-sink-input "$input" "$REAL_SINK"
-done
+  echo "Moving all streams to onboard sink $REAL_SINK..."
+  sink_inputs=$(pactl list short sink-inputs | awk '{print $1}')
+  for input in $sink_inputs; do
+    pactl move-sink-input "$input" "$REAL_SINK"
+  done
 
-  }
+  echo "Keeping virtual sink ($VIRTUAL_SINK) as default to avoid UI confusion"
+  pactl set-default-sink "$VIRTUAL_SINK"
+}
 
   last_default=""
   echo "Listening for default sink changes..."
+ 
+pactl subscribe | while read -r event; do
+  if echo "$event" | grep -q "Event 'change' on server"; then
+    current_default=$(get_default_sink)
+    if [[ "$current_default" != "$last_default" ]]; then
+      echo "Default sink changed to $current_default"
+      last_default="$current_default"
 
-  pactl subscribe | while read -r event; do
-    if echo "$event" | grep -q "Event 'change' on server"; then
-      current_default=$(get_default_sink)
-      if [[ "$current_default" != "$last_default" ]]; then
-        echo "Default sink changed to $current_default"
-        last_default="$current_default"
-        if [[ "$current_default" == "$VIRTUAL_SINK" ]]; then
-          switch_real_sink_to_headphones
-        fi
+      # Only act if the virtual sink was selected
+      if [[ "$current_default" == "$VIRTUAL_SINK" ]]; then
+        switch_real_sink_to_headphones
       fi
+      # Do nothing otherwise: allow switch to BT, HDMI, etc.
     fi
-  done
+  fi
+done
 }
 
 stop_service() {
