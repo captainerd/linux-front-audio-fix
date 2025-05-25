@@ -34,6 +34,13 @@ start_service() {
     echo "Switching real sink '$REAL_SINK' port to headphones..."
     pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
     pactl set-default-sink "$REAL_SINK"
+
+    # Move all active audio streams to the real sink
+sink_inputs=$(pactl list short sink-inputs | awk '{print $1}')
+for input in $sink_inputs; do
+  pactl move-sink-input "$input" "$REAL_SINK"
+done
+
   }
 
   last_default=""
