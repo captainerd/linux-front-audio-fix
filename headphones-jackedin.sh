@@ -1,16 +1,45 @@
 #!/bin/bash
-set -e
-
-VIRTUAL_SINK="fake_headphones"
-HEADPHONES_PORT="analog-output-headphones"
-
+ 
+VIRTUAL_SINK="headphones_fix"
+ 
+REAL_SINK=""
+HEADPHONES_PORT=""
 start_service() {
   echo "Cleaning up old modules before start..."
-  stop_service  # Clean leftovers before new start
+  stop_service
 
   echo "Starting headphones-jackedin service..."
 
-  REAL_SINK=$(pactl list short sinks | grep 'alsa_output.*analog-stereo' | head -n1 | awk '{print $2}')
+
+eval "$(
+  pactl list sinks | awk '
+    BEGIN { RS = "Sink #"; FS="\n" }
+
+    /pci/ && /-headphones:/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /Name:/) {
+          split($i, a, " ");
+          sink_name = a[2];
+        }
+        if ($i ~ /-headphones:/) {
+          match($i, /^[[:space:]]*[^:]*-headphones:/);
+          if (RSTART) {
+            split($i, p, ":");
+            gsub(/^[ \t]+/, "", p[1]); # trim leading whitespace
+            hp_port = p[1];
+          }
+        }
+      }
+
+      if (sink_name && hp_port) {
+        printf "REAL_SINK=\"%s\"\n", sink_name;
+        printf "HEADPHONES_PORT=\"%s\"\n", hp_port;
+        exit;
+      }
+    }
+  '
+)"
+ 
   if [[ -z "$REAL_SINK" ]]; then
     echo "No analog-stereo sink found!"
     exit 1
@@ -19,7 +48,7 @@ start_service() {
   echo "Using real sink: $REAL_SINK"
 
   # Create virtual sink
-  pactl load-module module-null-sink sink_name="$VIRTUAL_SINK" sink_properties="device.description='Headphones',device.icon_name=audio-headphones"
+  pactl load-module module-null-sink sink_name="$VIRTUAL_SINK" sink_properties="'device.description=\"HeadPhones / Fix\" device.class=\"sound\"   device.subsystem=\"sound\"   alsa.id=\"HeadPhones-fix\" device.name=\"${VIRTUAL_SINK}\"     audio.channels=\"2\" audio.position=\"FL,FR\"   device.nick=\"headphones\" device.icon_name=\"audio-headphones\"'"
   pactl load-module module-loopback source="${VIRTUAL_SINK}.monitor" sink="$REAL_SINK"
 
   echo "Virtual sink '$VIRTUAL_SINK' created."
@@ -34,16 +63,12 @@ get_headphones_port() {
   # Switch real sink to headphones port
 switch_real_sink_to_headphones() {
   echo "Switching onboard sink '$REAL_SINK' port to headphones..."
-  pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
-
-  echo "Moving all streams to onboard sink $REAL_SINK..."
-  sink_inputs=$(pactl list short sink-inputs | awk '{print $1}')
-  for input in $sink_inputs; do
-    pactl move-sink-input "$input" "$REAL_SINK"
-  done
-
+    pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
+    pactl set-sink-volume "$REAL_SINK" 100%
+    pactl set-default-sink "$VIRTUAL_SINK"
+    amixer set Master 100%
   echo "Keeping virtual sink ($VIRTUAL_SINK) as default to avoid UI confusion"
-  pactl set-default-sink "$VIRTUAL_SINK"
+  
 }
 
   last_default=""
@@ -56,14 +81,14 @@ pactl subscribe | while read -r event; do
       echo "Default sink changed to $current_default"
       last_default="$current_default"
 
-      # Only act if the virtual sink was selected
       if [[ "$current_default" == "$VIRTUAL_SINK" ]]; then
         switch_real_sink_to_headphones
       fi
-      # Do nothing otherwise: allow switch to BT, HDMI, etc.
     fi
   fi
+ 
 done
+
 }
 
 stop_service() {

@@ -54,7 +54,11 @@ This script creates a **virtual audio output** named "Headphones" that always ap
 
 Modern audio chips (Intel HD Audio spec) use **jack sensing** — the front panel audio jack reports when something is plugged in via special "fsense" return signals (usually pins 6 and 10 on the motherboard header).
  ![HD Audio Pinout](https://i.imgur.com/vCbO6Av.png)
+ 
+ 
 Older cases using the **AC'97 spec** might not even connect those fsense pins, or the cable is just plain missing. Worse, the **jack hole itself might be broken**, and the small switch inside isn't getting shorted by the jack anymore.
+
+
 
 On Windows, you often get registry-level overrides, vendor tools, or Realtek software. On Linux? You're expected to:
 
@@ -91,5 +95,9 @@ Found a bug? Missing a use case? Open an issue on the [GitHub repo](https://gith
 
 ---
 
-**This exists because fsense sucks and Linux never quite solved it.**
+**This exists because fsense sucks and Linux never quite solved it.** 
+
+hdajackretask from alsa-tools-gui failed to enable a 'headphones option' that should have appeared. Manual pin remapping with hda-verb failed as well. Trying different legacy snd_hda_intel models and layouts also led nowhere. Most likely, the BIOS undoes these changes at a low level or includes vendor-specific quirks that override driver defaults.
+
+This script remains the only effective method after exhaustive attempts and testing on systems using Realtek ALC887 and similar chipsets or for anyone with broken audio jack detection, The script doesn’t rely on any hardware-specific quirks or codec-level fixes. It simply bypasses broken jack sensing by creating a software “always-on” headphones output that you manually select.
 

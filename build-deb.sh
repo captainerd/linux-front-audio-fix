@@ -41,7 +41,7 @@ Version: $VERSION
 Section: base
 Priority: optional
 Architecture: $ARCH
-Depends: pulseaudio, systemd
+Depends: pulseaudio | pipewire-pulse, systemd
 Maintainer: Velecron (natsos@velecron.net)
 Description: Virtual audio output to always show front "Headphones" in sound settings
  Adds a virtual audio output in Linux to always display a front "Headphones" option in sound settings. 
