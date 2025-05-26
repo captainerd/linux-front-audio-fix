@@ -3,6 +3,9 @@
 VIRTUAL_SINK="headphones_fix"
 REAL_SINK=""
 HEADPHONES_PORT=""
+
+ 
+ 
 start_service() {
   echo "Cleaning up old modules before start..."
   stop_service
@@ -49,18 +52,15 @@ start_service() {
   fi
  
   echo "Using real sink: $REAL_SINK"
+ 
+  pactl load-module module-null-sink sink_name="$VIRTUAL_SINK" sink_properties="'device.description=\"HeadPhones / Fix\" device.class=\"sound\"   device.subsystem=\"sound\"   alsa.id=\"HeadPhones-fix\" device.name=\"${VIRTUAL_SINK}\"     audio.channels=\"2\" audio.position=\"FL,FR\"   device.nick=\"headphones\" device.icon_name=\"audio-headphones\"'"
+   pactl load-module module-loopback source="${VIRTUAL_SINK}.monitor" sink="$REAL_SINK"
 
-  # Create virtual sink
-  pactl load-module module-virtual-sink sink_name="$VIRTUAL_SINK" sink_properties="'device.description=\"HeadPhones / Fix\" device.class=\"sound\"   device.subsystem=\"sound\"   alsa.id=\"HeadPhones-fix\" device.name=\"${VIRTUAL_SINK}\"     audio.channels=\"2\" audio.position=\"FL,FR\"   device.nick=\"headphones\" device.icon_name=\"audio-headphones\"'"
-  pactl load-module module-loopback source="${VIRTUAL_SINK}.monitor" sink="$REAL_SINK"
   echo "Virtual sink '$VIRTUAL_SINK' created."
 
   # Switch real sink to headphones port
   switch_real_sink_to_headphones() {
-
-    for input in $(pactl list short sink-inputs | awk '{print $1}'); do
-      pactl move-sink-input "$input" "$REAL_SINK"
-    done
+ 
 
     echo "Switching onboard sink '$REAL_SINK' port to headphones..."
     pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
@@ -103,7 +103,7 @@ stop_service() {
   done
 
   # Unload null sink if exists
-  for module_id in $(pactl list short modules | grep "module-virtual-sink" | grep "sink_name=$VIRTUAL_SINK" | awk '{print $1}'); do
+  for module_id in $(pactl list short modules | grep "module-null-sink" | grep "sink_name=$VIRTUAL_SINK" | awk '{print $1}'); do
     echo "Unloading null sink module: $module_id"
     pactl unload-module "$module_id"
   done
