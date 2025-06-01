@@ -3,7 +3,7 @@
 set -e
 
 PKG_NAME="linux-headphones"
-VERSION="4.1"
+VERSION="4.2"
 ARCH="all"
 SCRIPT_FILE="headphones-jackedin.sh"
 DEB_DIR="${PKG_NAME}_${VERSION}"

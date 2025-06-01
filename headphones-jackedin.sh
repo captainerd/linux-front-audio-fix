@@ -95,26 +95,33 @@ switch_audio() {
   local mode="$1"
   local target_sink=""
 
-  unload_loopbacks
+    
 
   if [[ "$mode" == "headphones" ]]; then
+
     amixer set Headphone 100% unmute
+      pactl set-sink-volume "$REAL_SINK" 100%
     pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
-    pactl set-default-sink "$VIRTUAL_SINK"
-    pactl load-module module-loopback source="${VIRTUAL_SINK}.monitor" sink="$REAL_SINK"
-    target_sink="$VIRTUAL_SINK"
+      pactl set-default-sink "$REAL_SINK"
+            for input in $(pactl list short sink-inputs | awk '{print $1}'); do
+    pactl move-sink-input "$input" "$REAL_SINK"
+done
 
 elif [[ "$mode" == "lineout" ]]; then
     pactl set-sink-port "$REAL_SINK" "$LINEOUT_PORT"
-    pactl load-module module-loopback source="uplug_headphones.monitor" sink="$REAL_SINK"
-    pactl set-default-sink "uplug_headphones"
-    target_sink="uplug_headphones"
+     pactl set-default-sink "$REAL_SINK"
+                 for input in $(pactl list short sink-inputs | awk '{print $1}'); do
+    pactl move-sink-input "$input" "$REAL_SINK"
+done
   else
     echo "Unknown mode: $mode"
     return 1
   fi
 
-  pactl set-sink-volume "$REAL_SINK" 100%
+
+  
+
+
   amixer set Master unmute
   pactl set-sink-mute "$REAL_SINK" false
 
@@ -122,36 +129,23 @@ elif [[ "$mode" == "lineout" ]]; then
 }
 
 
-unload_loopbacks() {
-  for module_id in $(pactl list short modules | grep module-loopback | grep "sink=$REAL_SINK" | awk '{print $1}'); do
-    pactl unload-module "$module_id"
-    echo "unloaded $module_id"
-  done
-}
+ 
 
 start_service() {
   echo "Cleaning old modules..."
+   
   stop_service
-
+  
   get_ports
 
   echo "Creating virtual sinks..."
-  pactl load-module module-null-sink sink_name="uplug_headphones" sink_properties="'device.description=\"LineOut - Speakers\" device.class=\"sound\"'"
-  pactl load-module module-null-sink sink_name="$VIRTUAL_SINK" sink_properties="'device.description=\"HeadPhones / Fix\" device.class=\"sound\"'"
-
+  pactl load-module module-null-sink  sink_name="uplug_headphones"   sink_properties="'device.description=\"LineOut - Speakers\" device.class=\"sound\"'"
+  pactl load-module module-null-sink  sink_name="$VIRTUAL_SINK"   sink_properties="'device.description=\"HeadPhones / Fix\" device.class=\"sound\"'"
+ 
  current_default=$(pactl info | awk -F": " '/Default Sink/ {print $2}')
   echo "Current default sink: $current_default"
 
-  if [[ "$current_default" == "$VIRTUAL_SINK" ]]; then
-    echo "Switching to headphones mode on load..."
-    switch_audio headphones
-  elif [[ "$current_default" == "uplug_headphones" ]]; then
-    echo "Switching to lineout/speakers mode on load..."
-    switch_audio lineout
-  else
-    echo "Default sink is not managed by this script. No initial switch performed."
-  fi
-
+ 
   echo "Listening for default sink changes..."
   pactl subscribe | while read -r event; do
     if echo "$event" | grep -q "Event 'change' on server"; then
@@ -165,15 +159,18 @@ start_service() {
       fi
     fi
   done
+
+
+  
 }
 
 stop_service() {
   echo "Stopping and cleaning modules..."
 
-  
-  for module_id in $(pactl list short modules | grep -E "module-loopback|module-null-sink" | grep -E "$VIRTUAL_SINK|uplug_headphones" | awk '{print $1}'); do
+for module_id in $(pactl list short modules | grep module-null-sink | grep -E "$VIRTUAL_SINK|uplug_headphones" | awk '{print $1}'); do
     pactl unload-module "$module_id"
-  done
+done
+
 }
 
 case "$1" in
