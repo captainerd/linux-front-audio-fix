@@ -1,153 +1,186 @@
 #!/bin/bash
 #
-# Headphones/Speakers Auto-Switch Fix Script v4
+# Headphones/Speakers Auto-Switch Fix Script v4.1
 # Author: captainerd (github.com/captainerd/linux-front-audio-fix)
-# Email: natsos@velecron.net
+# Maintainer: natsos@velecron.net
 #
 # Purpose:
-#   This script provides a workaround for desktops/laptops where the 3.5mm front panel 
-#   jack does not correctly trigger automatic port switching between speakers and headphones.
-#   Common causes: broken fsense pin on motherboard, bad case wiring, or incorrect layout support.
-#
-# How it works:
-#   - Creates a virtual sink ("Headphones / Fix") that always outputs to the real sink.
-#   - Listens for default sink changes.
-#   - Redirects audio appropriately based on user-set sinks.
-#   - Includes a virtual "Speakers" option to restore automatic switching.
-#
-
+#   - Auto-detects headphones and line-out ports.
+#   - Creates virtual sinks and mirror loopbacks.
+#   - Switches audio based on default sink changes.
+#   - Designed for desktops/laptops with broken jack sensing.
 
 VIRTUAL_SINK="headphones_fix"
 REAL_SINK=""
 HEADPHONES_PORT=""
+LINEOUT_PORT=""
+SPEAKER_PORT=""
 
- 
- 
-start_service() {
-  echo "Cleaning up old modules before start..."
-  stop_service
+notify_fail() {
+  DISPLAY=:0 notify-send -u critical "Headphones Fix Script Error" "$1"
+}
 
-  echo "Starting headphones-jackedin service..."
-
-  # Function to get default sink
-  get_default_sink() {
-    pactl info | awk -F': ' '/Default Sink/ {print $2}'
-  }
-
-  eval "$(
+get_ports() {
+ eval "$(
     pactl list sinks | awk '
     BEGIN { RS = "Sink #"; FS="\n" }
 
-    /pci/ && /-headphones:/ {
+    /pci/ {
+      sink_name = "";
+      HEADPHONES_PORT = "";
+      LINEOUT_PORT = "";
+      SPEAKER_PORT = "";
+
       for (i = 1; i <= NF; i++) {
         if ($i ~ /Name:/) {
           split($i, a, " ");
           sink_name = a[2];
         }
+        # Headphones port (always assign)
         if ($i ~ /-headphones:/) {
           match($i, /^[[:space:]]*[^:]*-headphones:/);
           if (RSTART) {
             split($i, p, ":");
-            gsub(/^[ \t]+/, "", p[1]); # trim leading whitespace
-            hp_port = p[1];
+            gsub(/^[ \t]+/, "", p[1]);
+            HEADPHONES_PORT = p[1];
+          }
+        }
+        # Lineout port, check availability
+        if ($i ~ /-lineout:/) {
+          if ($i !~ /not available/) {
+            match($i, /^[[:space:]]*[^:]*-lineout:/);
+            if (RSTART) {
+              split($i, p, ":");
+              gsub(/^[ \t]+/, "", p[1]);
+              LINEOUT_PORT = p[1];
+            }
+          }
+        }
+        # Speaker port, check availability
+        if ($i ~ /-speaker:/) {
+          if ($i !~ /not available/) {
+            match($i, /^[[:space:]]*[^:]*-speaker:/);
+            if (RSTART) {
+              split($i, p, ":");
+              gsub(/^[ \t]+/, "", p[1]);
+              SPEAKER_PORT = p[1];
+            }
           }
         }
       }
 
-      if (sink_name && hp_port) {
+      if (sink_name && HEADPHONES_PORT) {
         printf "REAL_SINK=\"%s\"\n", sink_name;
-        printf "HEADPHONES_PORT=\"%s\"\n", hp_port;
+        printf "HEADPHONES_PORT=\"%s\"\n", HEADPHONES_PORT;
+        printf "LINEOUT_PORT=\"%s\"\n", LINEOUT_PORT;
+        printf "SPEAKER_PORT=\"%s\"\n", SPEAKER_PORT;
         exit;
       }
     }
-  '
+    '
   )"
 
-  if [[ -z "$REAL_SINK" ]]; then
-    echo "No analog-stereo sink found!"
-    exit 1
-  fi
- 
-  echo "Using real sink: $REAL_SINK"
-  pactl load-module module-virtual-sink sink_name="uplug_headphones" sink_properties="'device.description=\"Speakers\" device.class=\"sound\"   device.subsystem=\"sound\"   alsa.id=\"speakers-fix\" device.name=\"${VIRTUAL_SINK}\"     audio.channels=\"2\" audio.position=\"FL,FR\"   device.nick=\"speakers\" device.icon_name=\"audio-speakers\"'"
- 
-  pactl load-module module-null-sink sink_name="$VIRTUAL_SINK" sink_properties="'device.description=\"HeadPhones / Fix\" device.class=\"sound\"   device.subsystem=\"sound\"   alsa.id=\"HeadPhones-fix\" device.name=\"${VIRTUAL_SINK}\"     audio.channels=\"2\" audio.position=\"FL,FR\"   device.nick=\"headphones\" device.icon_name=\"audio-headphones\"'"
-  pactl load-module module-loopback source="${VIRTUAL_SINK}.monitor" sink="$REAL_SINK"
+ if [[ -z "$REAL_SINK" || ( -z "$HEADPHONES_PORT" && -z "$LINEOUT_PORT" && -z "$SPEAKER_PORT" ) ]]; then
+  msg="Required ports not detected:
+  Real sink: ${REAL_SINK:-not found}
+  Headphones port: ${HEADPHONES_PORT:-not found}
+  Line-out port: ${LINEOUT_PORT:-not found}
+  Speaker port: ${SPEAKER_PORT:-not found}"
+  notify_fail "$msg"
+  exit 1
+fi
+}
 
-  echo "Virtual sink '$VIRTUAL_SINK' created."
+switch_audio() {
+  local mode="$1"
+  local target_sink=""
 
-  # Switch real sink to headphones port
-  switch_real_sink_to_headphones() {
- 
+  unload_loopbacks
 
-    echo "Switching onboard sink '$REAL_SINK' port to headphones..."
-    echo  " ---> set-sink-port $REAL_SINK $HEADPHONES_PORT"
-    pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
-    pactl set-sink-volume "$REAL_SINK" 100%
-    # "Keeping virtual sink ($VIRTUAL_SINK) as default to avoid UI confusion"
-    pactl set-default-sink "$VIRTUAL_SINK"
-    amixer set Master 100% unmute
+  if [[ "$mode" == "headphones" ]]; then
     amixer set Headphone 100% unmute
-  }
+    pactl set-sink-port "$REAL_SINK" "$HEADPHONES_PORT"
+    pactl set-default-sink "$VIRTUAL_SINK"
+    pactl load-module module-loopback source="${VIRTUAL_SINK}.monitor" sink="$REAL_SINK"
+    target_sink="$VIRTUAL_SINK"
 
-  current_default=$(get_default_sink)
-  if [[ "$current_default" == "$VIRTUAL_SINK" ]]; then
-    switch_real_sink_to_headphones
+elif [[ "$mode" == "lineout" ]]; then
+    pactl set-sink-port "$REAL_SINK" "$LINEOUT_PORT"
+    pactl load-module module-loopback source="uplug_headphones.monitor" sink="$REAL_SINK"
+    pactl set-default-sink "uplug_headphones"
+    target_sink="uplug_headphones"
+  else
+    echo "Unknown mode: $mode"
+    return 1
   fi
 
-  last_default=""
-  echo "Listening for default sink changes..."
+  pactl set-sink-volume "$REAL_SINK" 100%
+  amixer set Master unmute
+  pactl set-sink-mute "$REAL_SINK" false
 
+   
+}
+
+
+unload_loopbacks() {
+  for module_id in $(pactl list short modules | grep module-loopback | grep "sink=$REAL_SINK" | awk '{print $1}'); do
+    pactl unload-module "$module_id"
+    echo "unloaded $module_id"
+  done
+}
+
+start_service() {
+  echo "Cleaning old modules..."
+  stop_service
+
+  get_ports
+
+  echo "Creating virtual sinks..."
+  pactl load-module module-null-sink sink_name="uplug_headphones" sink_properties="'device.description=\"LineOut - Speakers\" device.class=\"sound\"'"
+  pactl load-module module-null-sink sink_name="$VIRTUAL_SINK" sink_properties="'device.description=\"HeadPhones / Fix\" device.class=\"sound\"'"
+
+ current_default=$(pactl info | awk -F": " '/Default Sink/ {print $2}')
+  echo "Current default sink: $current_default"
+
+  if [[ "$current_default" == "$VIRTUAL_SINK" ]]; then
+    echo "Switching to headphones mode on load..."
+    switch_audio headphones
+  elif [[ "$current_default" == "uplug_headphones" ]]; then
+    echo "Switching to lineout/speakers mode on load..."
+    switch_audio lineout
+  else
+    echo "Default sink is not managed by this script. No initial switch performed."
+  fi
+
+  echo "Listening for default sink changes..."
   pactl subscribe | while read -r event; do
     if echo "$event" | grep -q "Event 'change' on server"; then
-      current_default=$(get_default_sink)
-
+      current_default=$(pactl info | awk -F': ' '/Default Sink/ {print $2}')
       echo "Default sink changed to $current_default"
-      last_default="$current_default"
 
       if [[ "$current_default" == "$VIRTUAL_SINK" ]]; then
-        switch_real_sink_to_headphones
-      fi
-       if [[ "$current_default" == "uplug_headphones" ]]; then
-        pactl unload-module module-switch-on-port-available 2>/dev/null
-        sleep 0.2
-        pactl load-module module-switch-on-port-available
-           pactl set-default-sink "$REAL_SINK"
+        switch_audio headphones
+      elif [[ "$current_default" == "uplug_headphones" ]]; then
+        switch_audio lineout
       fi
     fi
   done
 }
 
 stop_service() {
-  echo "Stopping headphones-jackedin service and cleaning up..."
+  echo "Stopping and cleaning modules..."
 
-  # Unload loopbacks feeding from virtual sink
-  for module_id in $(pactl list short modules | grep "module-loopback" | grep "$VIRTUAL_SINK.monitor" | awk '{print $1}'); do
-    echo "Unloading loopback module: $module_id"
+  
+  for module_id in $(pactl list short modules | grep -E "module-loopback|module-null-sink" | grep -E "$VIRTUAL_SINK|uplug_headphones" | awk '{print $1}'); do
     pactl unload-module "$module_id"
   done
-
-  # Unload null sink (headphones_fix)
-  for module_id in $(pactl list short modules | grep "module-null-sink" | grep "sink_name=$VIRTUAL_SINK" | awk '{print $1}'); do
-    echo "Unloading null sink module: $module_id"
-    pactl unload-module "$module_id"
-  done
-
-  # Unload virtual sink (uplug_headphones)
-  for module_id in $(pactl list short modules | grep "module-virtual-sink" | grep "sink_name=uplug_headphones" | awk '{print $1}'); do
-    echo "Unloading virtual sink module (uplug_headphones): $module_id"
-    pactl unload-module "$module_id"
-  done
-
-  echo "Cleanup complete."
 }
 
-
 case "$1" in
---stop)
-  stop_service
-  ;;
-*)
-  start_service
-  ;;
+  --stop)
+    stop_service
+    ;;
+  *)
+    start_service
+    ;;
 esac

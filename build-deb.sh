@@ -3,17 +3,16 @@
 set -e
 
 PKG_NAME="linux-headphones"
-VERSION="4"
+VERSION="4.1"
 ARCH="all"
 SCRIPT_FILE="headphones-jackedin.sh"
 DEB_DIR="${PKG_NAME}_${VERSION}"
 BUILD_DIR="./${DEB_DIR}"
 BIN_DIR="${BUILD_DIR}/usr/local/bin"
-SERVICE_DIR="${BUILD_DIR}/etc/systemd/user"   # change to user systemd dir
+SERVICE_DIR="${BUILD_DIR}/etc/systemd/user"   # user systemd dir
+PACKAGES_DIR="./packages"
 
-# ... rest same ...
-
-mkdir -p "$BIN_DIR" "$SERVICE_DIR" "${BUILD_DIR}/DEBIAN"
+mkdir -p "$BIN_DIR" "$SERVICE_DIR" "${BUILD_DIR}/DEBIAN" "$PACKAGES_DIR"
 
 # Copy the script
 install -m 755 "$SCRIPT_FILE" "$BIN_DIR"
@@ -34,7 +33,7 @@ Restart=on-failure
 WantedBy=default.target
 EOF
 
-# Control file same except add systemd user dependency
+# Control file with dependencies
 cat <<EOF > "${BUILD_DIR}/DEBIAN/control"
 Package: $PKG_NAME
 Version: $VERSION
@@ -49,7 +48,7 @@ Description: Virtual audio output to always show front "Headphones" in sound set
 
 EOF
 
-# postinst: enable/start user service for current user
+# postinst script: enable/start user service for active sessions
 cat <<'EOF' > "${BUILD_DIR}/DEBIAN/postinst"
 #!/bin/sh
 set -e
@@ -72,24 +71,21 @@ run_user_systemctl() {
 
 for dir in /run/user/*; do
     uid=$(basename "$dir")
-    # Check if bus socket exists to confirm active session
     if [ -e "$dir/bus" ]; then
         run_user_systemctl "$uid"
     fi
 done
 
 exit 0
-
 EOF
 
 chmod 755 "${BUILD_DIR}/DEBIAN/postinst"
 
-# prerm to stop/disable user service for current user
+# prerm script: stop/disable user service on uninstall
 cat <<'EOF' > "${BUILD_DIR}/DEBIAN/prerm"
 #!/bin/sh
 set -e
 
- 
 run_user_systemctl() {
     UID=$1
     USERNAME=$(id -nu "$UID" 2>/dev/null || echo "")
@@ -106,7 +102,6 @@ run_user_systemctl() {
         echo "No DBUS session bus for user $USERNAME ($UID), skipping PulseAudio unload and systemctl" >&2
         return
     fi
- 
 
     sudo -u "$USERNAME" env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" systemctl --user stop headphones-jackedin.service || true
     sudo -u "$USERNAME" env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" systemctl --user disable headphones-jackedin.service || true
@@ -123,13 +118,21 @@ for dir in /run/user/*; do
 done
 
 exit 0
-
-
 EOF
 
 chmod 755 "${BUILD_DIR}/DEBIAN/prerm"
 
-# Build the .deb
+# Build the .deb package
 dpkg-deb --build "$BUILD_DIR"
 
-echo "Built ${DEB_DIR}.deb"
+# Move the built package and clean up
+mv "${DEB_DIR}.deb" "$PACKAGES_DIR/"
+
+echo "📦 Package built and moved to $PACKAGES_DIR/${DEB_DIR}.deb"
+
+# Cleanup build directory
+rm -rf "$BUILD_DIR"
+
+echo "🧹 Cleaned up build directory."
+
+

@@ -1,0 +1,12 @@
+[Unit]
+Description=Auto-switch to real headphones when virtual sink is selected
+After=graphical.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/headphones-jackedin.sh
+ExecStop=/usr/local/bin/headphones-jackedin.sh --stop
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
